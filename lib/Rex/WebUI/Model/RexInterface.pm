@@ -3,18 +3,13 @@ package Rex::WebUI::Model::RexInterface;
 
 use strict;
 
-use Rex -base;
-
-use Rex::Batch;
-use Rex::Group;
-
+use Rex::Config;
 use Data::Dumper;
-
-# rex task names end with with the module namespace as a 'stem' - remove for readability
-my $STEM = 'WebUI:Model:RexInterface';
 
 # global callback used to override / hook into Rex::Logger class
 our $LOG_CALLBACK;
+
+use Rex::Rexfile;
 
 
 sub new { bless {}, shift }
@@ -23,14 +18,12 @@ sub get_task
 {
 	my ($self, $task) = @_;
 
-	$task =~ s/^$STEM//;
-	
-	my $tasklist = $self->get_tasklist;
+   my ($task_obj) = grep { $_->name eq $task } @{ $self->rexfile->get_tasks };
 
-	if ($tasklist->is_task("$STEM:$task")) {
+   if($task_obj) {
 
 		$task = {
-			%{$tasklist->get_task("$STEM:$task")->get_data},
+			%{$task_obj->get_data},
 			name 		=> $task,
 		};
 
@@ -44,13 +37,14 @@ sub get_task
 	}
 }
 
+sub rexfile {
+   my ($self) = @_;
+   return $self->{__rexfile__};
+}
+
 sub get_tasks
 {
 	my $self = shift;
-
-warn "COUNTER: " . $self->{counter}++;
-
-warn "PACKAGE: " . __PACKAGE__;
 
 	my $tasks;
 
@@ -60,41 +54,11 @@ warn "PACKAGE: " . __PACKAGE__;
 	}
 	else {
 
-		my $tasklist = $self->get_tasklist;
+		$tasks = $self->rexfile->get_tasks;
 
-		$tasks = [ $tasklist->get_tasks ];
-
-		# get the task details for each
-		foreach my $task (@$tasks) {
-
-			$task =~ s/$STEM://;
-
-			$task = {
-				name 		=> $task,
-				desc 		=> $tasklist->get_desc("$STEM:$task"),
-			};
-		}
 	}
 
 	return $tasks;
-}
-
-sub get_tasklist
-{
-	my $self = shift;
-
-	if (my $tasklist = $self->{tasklist}) {
-
-		return $tasklist;
-	}
-	else {
-
-		$self->load_rexfile;
-
-		my $tasklist = Rex::TaskList->create();
-
-		return $self->{tasklist} = $tasklist;
-	}
 }
 
 sub get_servers
@@ -103,21 +67,6 @@ sub get_servers
 
 	my $servers = [];
 
-	my $tasks = $self->get_tasks;
-
-	# build a list of server names from the task list
-	foreach my $task (@$tasks) {
-
-		$task = $self->get_task($task->{name});
-		
-		my $task_servers = $task->{server};
-		
-		next unless $task_servers && scalar @$task_servers > 0;
-		
-		foreach my $server (@$task_servers) {
-			push @$servers, $server->{name} unless $server->{name} ~~ $servers;	
-		}
-	}	
 
 	# expand server list into hashrefs, adding info from db if available
 	# TODO: add db interface
@@ -133,27 +82,13 @@ sub load_rexfile
 {
 	my ($self, $rexfile) = @_;
 
-  	$rexfile = $self->{rexfile} || "SampleRexfile" unless $rexfile;
+   $self->{__rexfile__} = Rex::Rexfile->new(file => $rexfile);
 
-   $Rex::TaskList::task_list = {};
    $self->{tasks} = undef;
    delete $self->{tasks};
 
    $self->{tasklist} = undef;
    delete $self->{tasklist};
-
-	if (defined do($rexfile)) {
-
-		warn "Loaded Rexfile: $rexfile";
-
-		$self->{rexfile} = $rexfile;
-	}
-	else {
-
-		warn "Error loading Rexfile: $rexfile - $@";
-
-		$self->{rexfile} = undef;
-	}
 }
 
 sub run_task
@@ -164,7 +99,7 @@ sub run_task
 
 	Rex::Config->set_log_filename($temp_logfile) if $temp_logfile;
 
-	my $result = do_task("$STEM:$task");
+   my $result = $self->rexfile->run_task($task);
 
 	Rex::Logger::info("DONE");
 	
